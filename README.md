@@ -80,3 +80,8 @@ Calculate features for tweets / conversations
 # model/
 
 **conversation_dynamics_model.R**
+Run logit and SVM on calculated features
+
+	Input: .txt.gzip file of feature matrix (one row = one observation)
+	
+	Output: Stargazer / latex summary of results
