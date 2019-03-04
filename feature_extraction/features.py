@@ -1,18 +1,42 @@
+"""
+Calculate features for tweets / conversations
+ 
+Input:
+   .json.gzip file of tweet metadata data. Expected to be of format:
+       convoID : { 
+            tweets : { tweetID: tweet metadata}
+            threads: [[tweetIDs ordered by entry]]        
+                }
+
+    .json.gzip file with topic loadings for each tweetID of format:
+        {convoID : 
+             {tweetID : {topic loadings}}}          
+
+Output: 
+    .txt.gzip file with matrix of output features
+"""
+
+### Parameters to set ###
+path = '/Users/Shugars/iPython Notebooks/Conversation patterns/'        #set path
+topic_file = 'topic_file2.json.gzip'                                #input topic file
+con_file = 'conversations.json.gzip'                                    #input conversation file
+feature_file = 'conv_features_v6.txt.gzip'                              #output features matrix
+valence_file = 'BRM-emot-submit.csv'                                   #word list for valence calculations
+### End customization ###  
+
 import json
 import gzip
-#import nltk
 from afinn import Afinn
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import numpy as np
+from scipy import spatial as spatial
+from datetime import datetime
 
-#path
-path = '/Users/Shugars/iPython Notebooks/Conversation patterns/'
-
+#set up
 #build valence dictionary
-valience_file = 'BRM-emot-submit.csv'
-
 sentiment = dict()
 
-with open(path + valience_file, 'r') as fp:
+with open(path + valence_file, 'r') as fp:
     for line in fp.readlines():
         line = line.strip().split(',')
         if line[2] != 'V.Mean.Sum':
@@ -22,7 +46,7 @@ with open(path + valience_file, 'r') as fp:
             dominance = float(line[8])
             
             sentiment.setdefault(word, dict())
-            sentiment[word]['valence'] = valence - 5.06 		#subtract mean
+            sentiment[word]['valence'] = valence - 5.06 		#subtract mean 
             sentiment[word]['arousal'] = arousal - 4.21			#subtract mean
             sentiment[word]['dominance'] = dominance - 5.18		#subtract mean
 
@@ -34,7 +58,6 @@ def get_valence(text, sentiment):
     dominance = 0.
     
     for word in text.split(' '):
-        if word in sentiment:
             valence += sentiment[word]['valence']
             arousal += sentiment[word]['arousal']
             dominance += sentiment[word]['dominance']
@@ -46,21 +69,24 @@ def get_valence(text, sentiment):
     
     return valence_scores
 
+#convert string post_time to datetime object
+def get_timestamp(post_time, month_dict):
+    post_time = tweets[tweetID]['created_at'].split()
 
-
+    hour, minute, second = map(int, post_time[3].split(':'))
+    timestamp = datetime(year = int(post_time[5]), month = month_dict[post_time[1]], day = int(post_time[2]), 
+                         hour = hour, minute = minute, second = second)
+    
+    return timestamp
 
 
 # calculate features for a collection of tweets
-
 def get_tweet_features(tweets, parents, topics, j):
     afinn = Afinn()
-    vader = SentimentIntensityAnalyzer()
+    analyzer = SentimentIntensityAnalyzer()
     
     tweet_features = dict()
-    
-    #train LDA on conversation
-    
-    
+
     for tweetID in tweets:
         tweet_features.setdefault(tweetID, dict())
         
@@ -71,6 +97,7 @@ def get_tweet_features(tweets, parents, topics, j):
         retweets = tweets[tweetID]['retweet_count']
         tweet_features[tweetID]['retweet_count'] = retweets      
 
+        #calculate `quality' tweets with no replies get quality == 0
         if tweetID in parents:
             replies = len(parents[tweetID])
             quality = float(retweets) / replies
@@ -103,46 +130,57 @@ def get_tweet_features(tweets, parents, topics, j):
 
         # code day of the week
         if post_time[0] == 'Mon':
-            tweet_features[tweetID]['day'] = 0
+            day = 0
         elif post_time[0] == 'Tue':
-            tweet_features[tweetID]['day'] = 1
+            day = 1
         elif post_time[0] == 'Wed':
-            tweet_features[tweetID]['day'] = 2
+            day = 2
         elif post_time[0] == 'Thu':
-            tweet_features[tweetID]['day'] = 3
+            day = 3
         elif post_time[0] == 'Fri':
-            tweet_features[tweetID]['day'] = 4
+            day = 4
         elif post_time[0] == 'Sat':
-            tweet_features[tweetID]['day'] = 5
+            day = 5
         elif post_time[0] == 'Sun':
-            tweet_features[tweetID]['day'] = 6
+            day = 6
         else:
-            tweet_features[tweetID]['day'] = -1
+            day = -1
             print('No day of the week for tweet %s' %tweetID)
+            
+        #transform to cyclical variable
+        tweet_features[tweetID]['xday'] = np.sin(2*np.pi*day/7)
+        tweet_features[tweetID]['yday'] = np.cos(2*np.pi*day/7)
 
         #get hour in GMT
-        tweet_features[tweetID]['hour'] = post_time[3].split(':')[0]    
-
+        tweet_features[tweetID]['hour'] = post_time[3].split(':')[0]  
+        hour = int(post_time[3].split(':')[0])
+        #transform to cyclical
+        tweet_features[tweetID]['xhour'] = np.sin(2*np.pi*hour/24)
+        tweet_features[tweetID]['yhour'] = np.cos(2*np.pi*hour/24)
+        
         #step 3: hard stuff
-        text = tweets[tweetID]['text'] 
+        text = tweets[tweetID]['full_text'] 
 
         #character count
         tweet_features[tweetID]['chars'] = len(text)
-
-        #code url
-        #No url = 0, includes url = 1
-        if 'http' in text:
-            tweet_features[tweetID]['url'] = 1
-        else:
-            tweet_features[tweetID]['url'] = 0
 
         #count mentions
         mentions = [c for c in text if c == '@']
         tweet_features[tweetID]['mentions'] = len(mentions)
 
+        #code url
+        #No url = 0, includes url = 1
+        url_check = tweets[tweetID]['entities']['urls']
+
+        if len(url_check) > 0:
+            tweet_features[tweetID]['url'] = 1
+        else:
+            tweet_features[tweetID]['url'] = 0
+
         #count hashtags
-        hashtags = [c for c in text if c == '#']
-        tweet_features[tweetID]['hashtags'] = len(hashtags)
+        hashtag_check = tweets[tweetID]['entities']['hashtags']
+
+        tweet_features[tweetID]['hashtags'] = len(hashtag_check)
         
         # sentiment afinn
         score = afinn.score(text)
@@ -169,8 +207,6 @@ def get_tweet_features(tweets, parents, topics, j):
 
 
 
-
-
 # get features for every tweet in a conversation
 # call specialized feature functions as needed
 
@@ -179,28 +215,37 @@ def get_features(conversation, topics, j):
     threads = conversation['threads'] #list of thread lists
     tweets = conversation['tweets'] # dict of tweetID : {tweet metadata}
     
-    user_features = dict()
+    user_features = dict() #dict of form {userID : {features}}
     
-    parents = dict()
     feature_lists = list()
+    child_times = dict()
     
     processed = list()
+    
+    month_dict = {'Jan' : 1, 'Feb' : 2, 'Mar' : 3, 'Apr' : 4, 'May' : 5, 'Jun' : 6,
+             'Jul' : 7, 'Aug' : 8, 'Sep' : 9, 'Oct' : 10, 'Nov' : 11, 'Dec' : 12}
     
     #get tweet and user meta data of interest
     for tweetID in tweets:
         
-        #record lineage
         parentID = tweets[tweetID]['in_reply_to_status_id_str']
-        parents.setdefault(parentID, list()) #parent can have more than one child
-        parents[parentID].append(tweetID)
+            
+        #capture timestamp as datetime object
+        timestamp = get_timestamp(tweets[tweetID]['created_at'].split(), month_dict)        
         
+        #record child times as datetime object
+        child_times.setdefault(parentID, dict())
+        child_times[parentID][timestamp] = tweetID        
+ 
         # user features
         userID = tweets[tweetID]['user']['id_str']
         
+        #if we haven't already calculated this user's features
         if userID not in user_features:
             user_features.setdefault(userID, dict())
             
             verified_status = tweets[tweetID]['user']['verified']
+
             # verified = 0 if unverified, 1 if verified
             if verified_status == False:
                 user_features[userID]['verified'] = 0
@@ -212,19 +257,24 @@ def get_features(conversation, topics, j):
             user_features[userID]['statuses_count'] = tweets[tweetID]['user']['statuses_count']
             user_features[userID]['favourites_count'] = tweets[tweetID]['user']['favourites_count']
 
+    #turn child times in to dict with ordered children
+    parents = dict()
+          
+    for parentID in child_times:
+        parents[parentID] = [c for t, c in sorted(child_times[parentID].items())]
             
     user_feature_order = ['verified', 'followers_count', 'following_count', 'statuses_count', 'favourites_count']
     
     tweet_features = get_tweet_features(tweets, parents, topics, j)
     
     tweet_feature_order = ['favorite_count', 'retweet_count', 'reply count', 'quality',
-                           'source', 'day', 'hour', 'chars', 'url', 'mentions', 'hashtags', 
+                           'source', 'xday', 'yday', 'xhour', 'yhour', 'chars', 'url', 'mentions', 'hashtags', 
                            'sentiment', 'vader_neg', 'vader_neu', 'vader_pos', 'vader_compound',
                           'valence', 'arousal', 'dominance', 'topic0', 'topic1', 'topic2', 'topic3',
                           'topic4', 'topic5', 'topic6', 'topic7', 'topic8', 'topic9']
         
     for thread in threads: # for each thread
-        threadID = thread[-1]
+        threadID = thread[-1] #index thread by leaf
         
         for t in range(2, len(thread)): #for each response 
             features = dict()
@@ -239,7 +289,14 @@ def get_features(conversation, topics, j):
                 last = thread[t-1]
                 i_t_minus = tweets[last]['user']['id_str'] 
 
-                participants = [tweets[tweet_t]['user']['id_str'] for tweet_t in thread[1:t]]
+                participants = [tweets[tweetID]['user']['id_str'] for tweetID in thread[1:t]]
+            
+                #build topic array for this tweet
+                topic_array = np.zeros(10)
+                
+                for index in range(10):
+                    topic_val = tweet_features[tweet_t]['topic'+str(index)]
+                    topic_array[index] = topic_val
 
                 # Construct candidate list
                 # exclude root
@@ -261,6 +318,7 @@ def get_features(conversation, topics, j):
                     for child in children:
                         respondent = tweets[child]['user']['id_str']
                         respondents[respondent] = child
+                    
                 except:
                     pass
 
@@ -272,13 +330,20 @@ def get_features(conversation, topics, j):
                     # y:
                     if i_t1 in respondents:
                         features[i_t1].append(1)
-                        tweet_t1 = respondents[i_t1]
+                        tweet_t1 = respondents[i_t1] #tweetID of corresponding tweet
+                        replies = children.index(child) #number of replies at this point (excluding candidate)
+                        
                     else:
                         features[i_t1].append(0)
                         tweet_t1 = 'NA'
+                        
+                        if tweet_t in parents:
+                            replies = len(parents[tweet_t])
+                        else:
+                            replies = 0
 
                     # index IDs
-                    features[i_t1].append(j)          # j
+                    features[i_t1].append(j)          # j - conversationID
                     features[i_t1].append(threadID)   # threadID
                     features[i_t1].append(tweet_t)    # tweet t
                     features[i_t1].append(tweet_t1)   # tweet t+1
@@ -307,7 +372,18 @@ def get_features(conversation, topics, j):
 
                     # comment t features
                     for feature in tweet_feature_order:
-                        features[i_t1].append(tweet_features[tweet_t][feature])                    
+                        features[i_t1].append(tweet_features[tweet_t][feature])
+                        
+                    #calculate retweets & quality at time t
+                    features[i_t1].append(replies)
+                    
+                    if replies == 0:
+                        quality = 0
+                    else:
+                        retweets = tweet_features[tweet_t]['retweet_count']
+                        quality = float(retweets) / float(replies)
+                 
+                    features[i_t1].append(quality)                    
                     
                     #comment t + 1 features
                     for feature in tweet_feature_order:
@@ -318,16 +394,33 @@ def get_features(conversation, topics, j):
                             
                     # comment t-1 features
                     #get index of last comment from i_t1
-                    prev_index = len(participants) - 1 - participants[::-1].index(i_t1)
-                    prev_tweet = thread[prev_index]
-                    t1_prev_t = prev_index + 1 - t
+                    prev_turns = [x for x in np.where(np.array(participants) == i_t1)[0] if x < t] #list of i_t1 tweet indices
+                    prev_t = max(prev_turns)  #index of last tweet
+                    prev_tweet = thread[prev_t] #tweetID of last tweet 
+                    t1_prev_t = t - prev_t    #distance from last tweet
+                                
+                    
+                    tminus_topic_array = np.zeros(10)
                     
                     for feature in tweet_feature_order:
                         features[i_t1].append(tweet_features[prev_tweet][feature])
-                    
+                        
+                        #build topic array for t-1 tweet
+                        if 'topic' in feature:
+                            topic_num = int(feature[-1])
+                            tminus_topic_array[topic_num] = tweet_features[prev_tweet][feature]
+                        
                     
                     features[i_t1].append(t1_prev_t)
-
+                    
+                    #cosign similiarity between t-1 topics and t
+                    cos = spatial.distance.cosine(topic_array, tminus_topic_array)
+                    features[i_t1].append(cos)
+                    
+                    #euclidian distance betweet t-1 and t
+                    euc = spatial.distance.euclidean(topic_array, tminus_topic_array)
+                    features[i_t1].append(euc)
+                    
                     # thread features
                     features[i_t1].append(t)                   # thread length
                     features[i_t1].append(len(candidate_list)) # participant count
@@ -335,25 +428,18 @@ def get_features(conversation, topics, j):
 
                 for user in features:
                     feature_lists.append(features[user])
-                
-                
                     
             else:
                 pass
             
-    return feature_lists 
+    return feature_lists
+
+
+### Main Function ###
 
 
 
-
-
-
-
-
-
-## Read in data
-con_file = 'conversations.json.gzip'
-
+# Read in data
 with gzip.open(path + con_file, 'r') as fp:
     for line in fp.readlines():
         conversations = json.loads(line.decode("utf8"))
@@ -361,9 +447,8 @@ with gzip.open(path + con_file, 'r') as fp:
 print('%s conversations found' %len(conversations))
 
 
-# identify tweets that don't mention Trump
+# identify conversations that don't mention Trump
 # so we can trim them from the data
-
 nonTrump = list()
 
 for convoID in conversations:
@@ -371,7 +456,7 @@ for convoID in conversations:
     trump_flag = False
     
     for tweetID in tweets:
-        text = tweets[tweetID]['text']
+        text = tweets[tweetID]['full_text']
         if 'Trump' in text or 'trump' in text:
             trump_flag = True
         
@@ -379,9 +464,7 @@ for convoID in conversations:
         nonTrump.append(convoID)
 
 ## read in topic file
-outfile = 'topic_file.json.gzip'
-
-with gzip.open(path + outfile, 'r') as fp:
+with gzip.open(path + topic_file, 'r') as fp:
     for line in fp.readlines():
         all_topics = json.loads(line.decode('utf8'))
 
@@ -399,11 +482,9 @@ for j in conversations:
             errors += 1
         else:
             obs_count += len(features)
-            #concatinate feature list
+
 
             # write to file
-            feature_file = 'conv_features_test.txt.gzip'
-
             with gzip.open(feature_file, 'a') as fp:
                 text = ""
                 for feature_list in features:

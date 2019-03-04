@@ -7,7 +7,7 @@ be used as the processing step after get_conversations.py, which will produce
 separate .txt files of tweetIDs connected to a given seed tweet.
 
 Requires: 
-	twitter_api_auth_round.json : file with Twitter authorization information
+	auth.py : file with Twitter authorization information
 
 Output:
 	For each .txt file, creates a .json.gzip file with full metadata for tweets
@@ -26,16 +26,20 @@ import json
 import gzip
 import glob
 from time import sleep
+from auth import TwitterAuth
 
 ### Step 1: validate credentials ###
-auth_fn = "twitter_api_auth_round.json"
 
-my_account = json.load(open(auth_fn, 'r'))
+auth = twitter.oauth.OAuth(TwitterAuth.access_token, 
+	TwitterAuth.access_token_secret,
+	TwitterAuth.API_key, 
+	TwitterAuth.API_secret)
 
-auth = twitter.oauth.OAuth(my_account["access_token"],
-                           my_account["access_token_secret"],
-                           my_account["api_key"],
-                           my_account["api_secret"])
+
+# Set access to Twitter API
+api = tweepy.API(auth, wait_on_rate_limit=True, wait_on_rate_limit_notify=True)
+
+print('Loaded API keys')
 
 my_twitter_app = twitter.Twitter(auth = auth)
 
