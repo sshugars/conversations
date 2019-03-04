@@ -58,6 +58,7 @@ def get_valence(text, sentiment):
     dominance = 0.
     
     for word in text.split(' '):
+        if word in sentiment:
             valence += sentiment[word]['valence']
             arousal += sentiment[word]['arousal']
             dominance += sentiment[word]['dominance']
