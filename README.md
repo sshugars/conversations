@@ -86,3 +86,7 @@ Run logit and SVM on calculated features
 	Input: .txt.gzip file of feature matrix (one row = one observation)
 	
 	Output: Stargazer / latex summary of results
+	
+# Data 
+
+To respect the privacy of individuals whose tweets our in our dataset, we've included a list of ids for all tweets used (`tweet_ids.txt`) rather than include the raw data itself. In order to replicate this study, researchers should begin by scraping these tweets. This process will ensure that we do not violate users privacy by sharing any tweet data which a user has elected to delete following our data collection window.
